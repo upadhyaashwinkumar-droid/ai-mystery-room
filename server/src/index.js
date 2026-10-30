@@ -12,16 +12,6 @@ import {
   suspectIdSchema
 } from "./schemas.js";
 
-// Validate required environment variables on startup
-const requiredEnvVars = ["MONGODB_URI", "GEMINI_API_KEY"];
-for (const envVar of requiredEnvVars) {
-  if (!process.env[envVar]) {
-    console.error(`❌ Missing required environment variable: ${envVar}`);
-    console.error("Please ensure your server/.env file contains all required keys.");
-    process.exit(1);
-  }
-}
-
 const app = express();
 const port = Number(process.env.PORT || 4000);
 
@@ -32,6 +22,26 @@ app.use(
   })
 );
 app.use(express.json({ limit: "16kb" }));
+
+let databaseConnection;
+async function ensureDatabase(_req, _res, next) {
+  try {
+    if (!process.env.MONGODB_URI) {
+      throw new Error("Missing required environment variable: MONGODB_URI");
+    }
+    if (!process.env.GEMINI_API_KEY) {
+      throw new Error("Missing required environment variable: GEMINI_API_KEY");
+    }
+    if (mongoose.connection.readyState !== 1) {
+      databaseConnection ||= mongoose.connect(process.env.MONGODB_URI);
+      await databaseConnection;
+    }
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+app.use(ensureDatabase);
 
 function publicCase(mystery) {
   return {
@@ -250,7 +260,9 @@ app.use((error, _req, res, _next) => {
 });
 
 async function start() {
-  // Securely read MongoDB URI from environment variables
+  if (!process.env.MONGODB_URI || !process.env.GEMINI_API_KEY) {
+    throw new Error("MONGODB_URI and GEMINI_API_KEY are required");
+  }
   await mongoose.connect(process.env.MONGODB_URI);
 
   app.listen(port, () => {
@@ -259,7 +271,12 @@ async function start() {
   });
 }
 
-start().catch((error) => {
-  console.error("Unable to start Mystery Room API:", error);
-  process.exitCode = 1;
-});
+if (!process.env.VERCEL) {
+  start().catch((error) => {
+    console.error("Unable to start Mystery Room API:", error);
+    process.exitCode = 1;
+  });
+}
+
+export { app };
+export default app;
